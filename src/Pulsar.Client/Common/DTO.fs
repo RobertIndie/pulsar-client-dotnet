@@ -437,7 +437,8 @@ type internal PendingMessage<'T> =
         CreatedAt: TimeStamp
         SequenceId: SequenceId
         HighestSequenceId: SequenceId
-        Payload: SendTask
+        SendTask: SendTask
+        Payload: MemoryStream
         Callback : PendingCallback<'T>
     }
 

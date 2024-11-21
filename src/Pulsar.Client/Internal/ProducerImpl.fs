@@ -120,6 +120,7 @@ type internal ProducerImpl<'T> private (producerConfig: ProducerConfiguration, c
     let failPendingMessages (ex: exn) =
         while pendingMessages.Count > 0 do
             let msg = pendingMessages.Dequeue()
+            msg.Payload.Dispose()
             failPendingMessage msg ex
         while blockedRequests.Count > 0 do
             let struct(_, channel, _) = blockedRequests.Dequeue()
@@ -191,7 +192,7 @@ type internal ProducerImpl<'T> private (producerConfig: ProducerConfiguration, c
         pendingMessages.Enqueue(pendingMessage)
         match connectionHandler.ConnectionState with
         | Ready clientCnx ->
-            clientCnx.SendAndForget pendingMessage.Payload
+            clientCnx.SendAndForget pendingMessage.SendTask
         | _ ->
             Log.Logger.LogWarning("{0} not connected, skipping send", prefix)
 
@@ -208,12 +209,13 @@ type internal ProducerImpl<'T> private (producerConfig: ProducerConfiguration, c
                 |> post this.Mb
                 i <- i - 1
         pendingMessages.Dequeue() |> ignore
+        pendingMessage.Payload.Dispose()
 
     let resendMessages (clientCnx: ClientCnx) =
         if pendingMessages.Count > 0 then
             Log.Logger.LogInformation("{0} resending {1} pending messages", prefix, pendingMessages.Count)
             for pendingMessage in pendingMessages do
-                clientCnx.SendAndForget pendingMessage.Payload
+                clientCnx.SendAndForget pendingMessage.SendTask
         else
             Log.Logger.LogDebug("{0} No pending messages to resend", prefix)
             producerCreatedTsc.TrySetResult() |> ignore
@@ -222,7 +224,7 @@ type internal ProducerImpl<'T> private (producerConfig: ProducerConfiguration, c
         backgroundTask {
             use stream = MemoryStreamManager.GetStream()
             use reader = new BinaryReader(stream)
-            let struct(send, _) = msg.Payload
+            let struct(send, _) = msg.SendTask
             let writer = PipeWriter.Create(stream, StreamPipeWriterOptions(leaveOpen = true))
             do! send writer // materialize stream
             do! writer.CompleteAsync()
@@ -324,7 +326,8 @@ type internal ProducerImpl<'T> private (producerConfig: ProducerConfiguration, c
                 let pendingMessage = {
                     SequenceId = lowestSequenceId
                     HighestSequenceId = highestSequenceId
-                    Payload = sendTask
+                    SendTask = sendTask
+                    Payload = encryptedBatchPayload
                     Callback = BatchCallbacks batchCallbacks
                     CreatedAt = %Stopwatch.GetTimestamp()
                 }
@@ -468,7 +471,8 @@ type internal ProducerImpl<'T> private (producerConfig: ProducerConfiguration, c
                             let pendingMessage = {
                                 SequenceId = sequenceId
                                 HighestSequenceId = %(-1L)
-                                Payload = payload
+                                SendTask = payload
+                                Payload = encryptedPayload
                                 Callback = SingleCallback (chunkDetails, message, channel)
                                 CreatedAt = %Stopwatch.GetTimestamp()
                             }

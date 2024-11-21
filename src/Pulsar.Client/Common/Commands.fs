@@ -104,7 +104,6 @@ let private serializePayloadCommand (command : BaseCommand) (metadata: MessageMe
             try
                 return! temp.CopyToAsync(output)
             finally
-                payload.Dispose()
                 temp.Dispose()
                 binaryWriter.Dispose()
         } :> Task

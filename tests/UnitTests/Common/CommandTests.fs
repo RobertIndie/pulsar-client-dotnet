@@ -257,4 +257,16 @@ module CommandsTests =
                 command.Seek.ConsumerId |> Expect.equal "" %consumerId
                 command.Seek.RequestId |> Expect.equal "" %requestId
             }
+            
+            test "newSend shouldn't dispose the payload" {
+                let producerId: ProducerId =  % 5UL
+                let sequenceId: SequenceId =  % 6L
+                let numMessages =  1
+                let metadata = MessageMetadata(ProducerName = "TestMe")
+                let payload = [| 1uy; 17uy; |]
+                let streamPayload = new MemoryStream(payload)
+
+                serializeDeserializePayloadCommand (newSend producerId sequenceId None numMessages metadata streamPayload) |> ignore
+                Expect.isTrue "Stream should not be disposed" streamPayload.CanRead
+            }
         ]
