@@ -17,5 +17,14 @@
     <Compile Include="Oauth2.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Remove="Pulsar.Client" />
+    <PackageReference Remove="Pulsar.Client.Otel" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Pulsar.Client.Otel\Pulsar.Client.Otel.fsproj" />
+    <ProjectReference Include="..\..\src\Pulsar.Client.Proto\Pulsar.Client.Proto.csproj" />
+    <ProjectReference Include="..\..\src\Pulsar.Client\Pulsar.Client.fsproj" />
+  </ItemGroup>
   <Import Project="..\..\.paket\Paket.Restore.targets" />
 </Project>

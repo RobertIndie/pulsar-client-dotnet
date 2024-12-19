@@ -31,5 +31,11 @@
     <Compile Include="OTelProducerInterceptor.fs" />
     <Compile Include="OtelConsumerInterceptor.fs" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Remove="Pulsar.Client" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Pulsar.Client\Pulsar.Client.fsproj" />
+  </ItemGroup>
   <Import Project="..\..\.paket\Paket.Restore.targets" />
 </Project>
