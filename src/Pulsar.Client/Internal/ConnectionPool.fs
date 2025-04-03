@@ -134,7 +134,7 @@ type internal ConnectionPool (config: PulsarClientConfiguration) =
                                   broker, maxMessageSize)
         backgroundTask {
             let (PhysicalAddress physicalAddress) = broker.PhysicalAddress
-            let pipeOptions = PipeOptions(pauseWriterThreshold = int64 maxMessageSize )
+            let pipeOptions = PipeOptions()
             let! socket = getSocket physicalAddress
 
             try
