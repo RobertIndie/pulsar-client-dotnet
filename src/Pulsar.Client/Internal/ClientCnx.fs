@@ -564,6 +564,50 @@ and internal ClientCnx (config: PulsarClientConfiguration,
                     fromLongArray cmd.AckSets metadata.NumMessages
         }
 
+    let tryDispatchConsumerCommand xcmd =
+        let tryGetConsumer consumerId =
+            match consumers.TryGetValue consumerId with
+            | true, consumerOperations -> Some consumerOperations
+            | _ -> None
+
+        match xcmd with
+        | XCommandAckResponse cmd ->
+            match tryGetConsumer %cmd.ConsumerId with
+            | Some consumerOperations ->
+                if cmd.ShouldSerializeError() then
+                    let ex = getPulsarClientException cmd.Error cmd.Message
+                    consumerOperations.AckError(%cmd.RequestId, ex)
+                else
+                    consumerOperations.AckReceipt(%cmd.RequestId)
+            | None ->
+                Log.Logger.LogWarning("{0} consumer {1} wasn't found on CommandAckResponse", prefix, %cmd.ConsumerId)
+            true
+        | XCommandMessage (cmd, metadata, payload, checkSumValid) ->
+            match tryGetConsumer %cmd.ConsumerId with
+            | Some consumerOperations ->
+                let msgReceived = getMessageReceived cmd metadata payload checkSumValid
+                consumerOperations.MessageReceived(msgReceived, this)
+            | None ->
+                Log.Logger.LogWarning("{0} consumer {1} wasn't found on CommandMessage", prefix, %cmd.ConsumerId)
+            true
+        | XCommandCloseConsumer cmd ->
+            match tryGetConsumer %cmd.ConsumerId with
+            | Some consumerOperations ->
+                post operationsMb (RemoveConsumer %cmd.ConsumerId)
+                consumerOperations.ConnectionClosed(this)
+            | None ->
+                Log.Logger.LogWarning("{0} consumer {1} wasn't found on CommandCloseConsumer", prefix, %cmd.ConsumerId)
+            true
+        | XCommandReachedEndOfTopic cmd ->
+            match tryGetConsumer %cmd.ConsumerId with
+            | Some consumerOperations ->
+                consumerOperations.ReachedEndOfTheTopic()
+            | None ->
+                Log.Logger.LogWarning("{0} consumer {1} wasn't found on CommandReachedEndOfTopic", prefix, %cmd.ConsumerId)
+            true
+        | _ ->
+            false
+
     let handleCommand xcmd =
         this.WaitingForPingResponse <- false
         match xcmd with
@@ -593,16 +637,11 @@ and internal ClientCnx (config: PulsarClientConfiguration,
                 }
             | _ ->
                 Log.Logger.LogWarning("{0} producer {1} wasn't found on CommandSendReceipt", prefix, %cmd.ProducerId)
-        | XCommandAckResponse cmd ->
-            match consumers.TryGetValue %cmd.ConsumerId with
-            | true, consumerOperations ->
-                if cmd.ShouldSerializeError() then
-                    let ex = getPulsarClientException cmd.Error cmd.Message
-                    consumerOperations.AckError(%cmd.RequestId, ex)
-                else
-                    consumerOperations.AckReceipt(%cmd.RequestId)
-            | _ ->
-                Log.Logger.LogWarning("{0} consumer {1} wasn't found on CommandAckResponse", prefix, %cmd.ConsumerId)
+        | XCommandAckResponse _
+        | XCommandMessage _
+        | XCommandCloseConsumer _
+        | XCommandReachedEndOfTopic _ ->
+            tryDispatchConsumerCommand xcmd |> ignore
         | XCommandSendError cmd ->
             Log.Logger.LogWarning("{0} Received send error from server: {1} : {2}", prefix, cmd.Error, cmd.Message)
             match producers.TryGetValue %cmd.ProducerId with
@@ -624,13 +663,6 @@ and internal ClientCnx (config: PulsarClientConfiguration,
             post sendMb (SocketMessageWithoutReply(Commands.newPong()))
         | XCommandPong _ ->
             ()
-        | XCommandMessage (cmd, metadata, payload, checkSumValid) ->
-            match consumers.TryGetValue %cmd.ConsumerId with
-            | true, consumerOperations ->
-                let msgReceived = getMessageReceived cmd metadata payload checkSumValid
-                consumerOperations.MessageReceived(msgReceived, this)
-            | _ ->
-                Log.Logger.LogWarning("{0} consumer {1} wasn't found on CommandMessage", prefix, %cmd.ConsumerId)
         | XCommandLookupResponse cmd ->
             if cmd.ShouldSerializeError() then
                 checkServerError cmd.Error cmd.Message
@@ -659,19 +691,6 @@ and internal ClientCnx (config: PulsarClientConfiguration,
                 producerOperations.ConnectionClosed(this)
             | _ ->
                 Log.Logger.LogWarning("{0} producer {1} wasn't found on CommandCloseProducer", prefix, %cmd.ProducerId)
-        | XCommandCloseConsumer cmd ->
-            match consumers.TryGetValue %cmd.ConsumerId with
-            | true, consumerOperations ->
-                post operationsMb (RemoveConsumer %cmd.ConsumerId)
-                consumerOperations.ConnectionClosed(this)
-            | _ ->
-                Log.Logger.LogWarning("{0} consumer {1} wasn't found on CommandCloseConsumer", prefix, %cmd.ConsumerId)
-        | XCommandReachedEndOfTopic cmd ->
-            match consumers.TryGetValue %cmd.ConsumerId with
-            | true, consumerOperations ->
-                consumerOperations.ReachedEndOfTheTopic()
-            | _ ->
-                Log.Logger.LogWarning("{0} consumer {1} wasn't found on CommandReachedEndOfTopic", prefix, %cmd.ConsumerId)
         | XCommandGetTopicsOfNamespaceResponse cmd ->
             let result = TopicsOfNamespace <| cmd.Topics.ToArray()
             handleSuccess %cmd.RequestId result BaseCommand.Type.GetTopicsOfNamespaceResponse
@@ -894,6 +913,56 @@ and internal ClientCnx (config: PulsarClientConfiguration,
             postAndAsyncReply sendMb (fun replyChannel -> SocketRequestMessageWithReply(reqId, payload, replyChannel))
         else
             Task.FromException<PulsarResponseType> <| ConnectException "Disconnected."
+
+    member internal this.PendingRequestIdsForTests() =
+        requests.Keys |> Seq.toArray
+
+    member internal this.CompleteRequestForTests(requestId: RequestId, commandType: BaseCommand.Type, result: PulsarResponseType) =
+        post requestsMb (CompleteRequest(requestId, commandType, result))
+
+    member internal this.DispatchConsumerCommandForTests
+        (consumerOperationsMap: Dictionary<ConsumerId, ConsumerOperations>,
+         postOperation: CnxOperation -> unit,
+         xcmd: PulsarCommand) =
+
+        let tryGetConsumer consumerId =
+            match consumerOperationsMap.TryGetValue consumerId with
+            | true, consumerOperations -> Some consumerOperations
+            | _ -> None
+
+        match xcmd with
+        | XCommandAckResponse cmd ->
+            match tryGetConsumer %cmd.ConsumerId with
+            | Some consumerOperations ->
+                if cmd.ShouldSerializeError() then
+                    let ex = getPulsarClientException cmd.Error cmd.Message
+                    consumerOperations.AckError(%cmd.RequestId, ex)
+                else
+                    consumerOperations.AckReceipt(%cmd.RequestId)
+            | None ->
+                Log.Logger.LogWarning("{0} consumer {1} wasn't found on CommandAckResponse", prefix, %cmd.ConsumerId)
+        | XCommandMessage (cmd, metadata, payload, checkSumValid) ->
+            match tryGetConsumer %cmd.ConsumerId with
+            | Some consumerOperations ->
+                let msgReceived = getMessageReceived cmd metadata payload checkSumValid
+                consumerOperations.MessageReceived(msgReceived, this)
+            | None ->
+                Log.Logger.LogWarning("{0} consumer {1} wasn't found on CommandMessage", prefix, %cmd.ConsumerId)
+        | XCommandCloseConsumer cmd ->
+            match tryGetConsumer %cmd.ConsumerId with
+            | Some consumerOperations ->
+                postOperation (RemoveConsumer %cmd.ConsumerId)
+                consumerOperations.ConnectionClosed(this)
+            | None ->
+                Log.Logger.LogWarning("{0} consumer {1} wasn't found on CommandCloseConsumer", prefix, %cmd.ConsumerId)
+        | XCommandReachedEndOfTopic cmd ->
+            match tryGetConsumer %cmd.ConsumerId with
+            | Some consumerOperations ->
+                consumerOperations.ReachedEndOfTheTopic()
+            | None ->
+                Log.Logger.LogWarning("{0} consumer {1} wasn't found on CommandReachedEndOfTopic", prefix, %cmd.ConsumerId)
+        | _ ->
+            invalidArg (nameof xcmd) $"Unsupported consumer command for tests: {xcmd}"
 
     member this.RemoveConsumer (consumerId: ConsumerId) =
         if this.IsActive then

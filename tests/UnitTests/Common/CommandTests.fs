@@ -166,6 +166,7 @@ module CommandsTests =
                 command.Subscribe.ConsumerId |> Expect.equal "" %consumerId
                 command.Subscribe.ConsumerName |> Expect.equal "" %consumerName
                 command.Subscribe.ReplicateSubscriptionState |> Expect.equal "" %false
+                command.Subscribe.ShouldSerializeConsumerEpoch() |> Expect.isFalse ""
             }
 
             test "newFlow should return correct frame" {

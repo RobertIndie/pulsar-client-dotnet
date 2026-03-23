@@ -1428,6 +1428,11 @@ type internal ConsumerImpl<'T> (consumerConfig: ConsumerConfiguration<'T>, clien
 
     member internal this.Mb with get(): Channel<ConsumerMessage<'T>> = mb
 
+    member internal this.ConsumerOperations = consumerOperations
+
+    member internal this.SetReady(clientCnx: ClientCnx) =
+        connectionHandler.SetReady clientCnx
+
     member this.ConsumerId with get() = consumerId
 
     member this.HasMessageAvailableAsync() =

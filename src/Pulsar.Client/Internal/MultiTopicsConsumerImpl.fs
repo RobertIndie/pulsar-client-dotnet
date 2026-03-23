@@ -1033,7 +1033,16 @@ type internal MultiTopicsConsumerImpl<'T> (consumerConfig: ConsumerConfiguration
         | _ -> ()
 
 
-    member private this.Mb with get(): Channel<MultiTopicConsumerMessage<'T>> = mb
+    member internal this.Mb with get(): Channel<MultiTopicConsumerMessage<'T>> = mb
+
+    member internal this.SetCurrentStreamForTests(stream: TaskSeq<ResultOrException<Message<'T>>>) =
+        currentStream <- stream
+
+    member internal this.AddConsumerForTests(topicName: CompleteTopicName, consumer: IConsumer<'T>, generator: TaskGenerator<ResultOrException<Message<'T>>>) =
+        consumers[topicName] <- (consumer, generator)
+
+    member internal this.InjectPolledMessageForTests(message: ResultOrException<Message<'T>>) =
+        postAndAsyncReply mb (fun channel -> MessageReceived(message, channel))
 
     member this.ConsumerId with get() = consumerId
 

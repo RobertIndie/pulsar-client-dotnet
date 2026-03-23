@@ -17,6 +17,80 @@ open Serilog
 open Pulsar.Client.IntegrationTests
 open Pulsar.Client.IntegrationTests.Common
 
+let private createNonDurableLatestConsumer (client: PulsarClient) topicName subscriptionName receiverQueueSize =
+    client.NewConsumer()
+        .Topic(topicName)
+        .ConsumerName(Guid.NewGuid().ToString("N"))
+        .SubscriptionType(SubscriptionType.Exclusive)
+        .SubscriptionInitialPosition(SubscriptionInitialPosition.Latest)
+        .SubscriptionMode(SubscriptionMode.NonDurable)
+        .SubscriptionName(subscriptionName)
+        .ReceiverQueueSize(receiverQueueSize)
+        .EnableRetry(false)
+        .SubscribeAsync()
+
+let private createNonDurableLatestConsumerWithAckGroup (client: PulsarClient) topicName subscriptionName receiverQueueSize ackGroupTime =
+    client.NewConsumer()
+        .Topic(topicName)
+        .ConsumerName(Guid.NewGuid().ToString("N"))
+        .SubscriptionType(SubscriptionType.Exclusive)
+        .SubscriptionInitialPosition(SubscriptionInitialPosition.Latest)
+        .SubscriptionMode(SubscriptionMode.NonDurable)
+        .SubscriptionName(subscriptionName)
+        .ReceiverQueueSize(receiverQueueSize)
+        .AcknowledgementsGroupTime(ackGroupTime)
+        .EnableRetry(false)
+        .SubscribeAsync()
+
+let private encodeSequence sequence =
+    Encoding.UTF8.GetBytes(string sequence)
+
+let private decodeSequence (message: Message<byte[]>) =
+    message.GetValue()
+    |> Encoding.UTF8.GetString
+    |> int
+
+let private produceSequencedMessages (producer: IProducer<byte[]>) startSequence count : Task<MessageId[]> =
+    task {
+        let messageIds = Array.zeroCreate<MessageId> count
+        for offset in 0..(count-1) do
+            let sequence = startSequence + offset
+            let! messageId = producer.SendAsync(encodeSequence sequence)
+            messageIds.[offset] <- messageId
+        return messageIds
+    }
+
+let private receiveAndAcknowledgeSequence (consumer: IConsumer<byte[]>) expectedSequences (timeout: TimeSpan) context =
+    task {
+        for expectedSequence in expectedSequences do
+            use cts = new CancellationTokenSource(timeout)
+            let! message = consumer.ReceiveAsync(cts.Token)
+            let actualSequence = decodeSequence message
+            Expect.equal
+                (sprintf "%s: unexpected sequence while consuming after seek" context)
+                expectedSequence
+                actualSequence
+            do! consumer.AcknowledgeAsync(message.MessageId)
+    }
+
+let private receiveWithTimeout (consumer: IConsumer<byte[]>) (timeout: TimeSpan) =
+    task {
+        use cts = new CancellationTokenSource(timeout)
+        return! consumer.ReceiveAsync(cts.Token)
+    }
+
+let private unloadTopic topicName =
+    task {
+        let url = $"{pulsarHttpAddress}/admin/v2/persistent/{topicName}/unload"
+        use! response = commonHttpClient.PutAsync(url, null)
+        response.EnsureSuccessStatusCode() |> ignore
+    }
+
+let private seekUsingSerializedMessageId (consumer: IConsumer<byte[]>) (messageId: MessageId) =
+    let serializedMessageId = messageId.ToByteArray()
+    let deserializedMessageId = MessageId.FromByteArray(serializedMessageId)
+    consumer.SeekAsync(Func<string, SeekType>(fun _ -> SeekType.MessageId deserializedMessageId))
+
 [<Tests>]
 let tests =
 
@@ -240,6 +314,186 @@ let tests =
         
         testTask "Seek randomly works without batching " {
             do! testRandomSeek true 
+        }
+
+        testTask "Non-durable consumer seek stays stable after topic unload" {
+
+            Log.Debug("Started Non-durable consumer seek stays stable after topic unload")
+            let client = getClient()
+            let topicName = "public/default/topic-" + Guid.NewGuid().ToString("N")
+            let subscriptionName = "seek-nondurable-unload-" + Guid.NewGuid().ToString("N")
+            let baseMessageCount = 40
+            let tailMessageCount = 5
+            let seekIndex = 14
+
+            let! (producer: IProducer<byte[]>) =
+                client.NewProducer()
+                    .Topic(topicName)
+                    .ProducerName("seek-unload-producer")
+                    .EnableBatching(false)
+                    .CreateAsync()
+
+            let! (baseMessageIds: MessageId[]) = produceSequencedMessages producer 0 baseMessageCount
+
+            let! (consumer: IConsumer<byte[]>) =
+                createNonDurableLatestConsumer client topicName subscriptionName 20
+
+            do! seekUsingSerializedMessageId consumer baseMessageIds.[seekIndex]
+            do! Task.Delay(500)
+            do! unloadTopic topicName
+            do! Task.Delay(1000)
+
+            do!
+                receiveAndAcknowledgeSequence
+                    consumer
+                    [seekIndex + 1 .. baseMessageCount - 1]
+                    (TimeSpan.FromSeconds(20.0))
+                    "after unloading the topic"
+
+            let! _ = produceSequencedMessages producer baseMessageCount tailMessageCount
+
+            do!
+                receiveAndAcknowledgeSequence
+                    consumer
+                    [baseMessageCount .. baseMessageCount + tailMessageCount - 1]
+                    (TimeSpan.FromSeconds(10.0))
+                    "after publishing new messages post-seek"
+
+            do! consumer.DisposeAsync().AsTask()
+            do! producer.DisposeAsync().AsTask()
+            Log.Debug("Finished Non-durable consumer seek stays stable after topic unload")
+        }
+
+        testTask "Non-durable consumer seek stays stable after repeated recreate and close" {
+
+            Log.Debug("Started Non-durable consumer seek stays stable after repeated recreate and close")
+            let client = getClient()
+            let topicName = "public/default/topic-" + Guid.NewGuid().ToString("N")
+            let subscriptionName = "seek-nondurable-recreate-" + Guid.NewGuid().ToString("N")
+            let baseMessageCount = 35
+            let tailMessageCount = 5
+            let seekIndex = 11
+            let warmupCycles = 12
+
+            let! (producer: IProducer<byte[]>) =
+                client.NewProducer()
+                    .Topic(topicName)
+                    .ProducerName("seek-recreate-producer")
+                    .EnableBatching(false)
+                    .CreateAsync()
+
+            let! (baseMessageIds: MessageId[]) = produceSequencedMessages producer 0 baseMessageCount
+
+            for cycle in 1..warmupCycles do
+                let! (consumer: IConsumer<byte[]>) =
+                    createNonDurableLatestConsumer client topicName subscriptionName 10
+
+                do! seekUsingSerializedMessageId consumer baseMessageIds.[seekIndex]
+                do! Task.Delay(200)
+                do!
+                    receiveAndAcknowledgeSequence
+                        consumer
+                        [seekIndex + 1; seekIndex + 2]
+                        (TimeSpan.FromSeconds(10.0))
+                        (sprintf "during warmup cycle %i" cycle)
+                do! consumer.DisposeAsync().AsTask()
+
+            let! (consumer: IConsumer<byte[]>) =
+                createNonDurableLatestConsumer client topicName subscriptionName 10
+
+            do! seekUsingSerializedMessageId consumer baseMessageIds.[seekIndex]
+            do! Task.Delay(200)
+            do!
+                receiveAndAcknowledgeSequence
+                    consumer
+                    [seekIndex + 1 .. baseMessageCount - 1]
+                    (TimeSpan.FromSeconds(10.0))
+                    "after recreating the subscription repeatedly"
+
+            let! _ = produceSequencedMessages producer baseMessageCount tailMessageCount
+
+            do!
+                receiveAndAcknowledgeSequence
+                    consumer
+                    [baseMessageCount .. baseMessageCount + tailMessageCount - 1]
+                    (TimeSpan.FromSeconds(10.0))
+                    "after recreating the subscription and publishing new messages"
+
+            do! consumer.DisposeAsync().AsTask()
+            do! producer.DisposeAsync().AsTask()
+            Log.Debug("Finished Non-durable consumer seek stays stable after repeated recreate and close")
+        }
+
+        testTask "Non-durable consumer seek does not leak stale messages across seek reconnects" {
+
+            Log.Debug("Started Non-durable consumer seek does not leak stale messages across seek reconnects")
+            let client = getClient()
+            let topicName = "public/default/topic-" + Guid.NewGuid().ToString("N")
+            let subscriptionName = "seek-nondurable-stale-" + Guid.NewGuid().ToString("N")
+            let receiverQueueSize = 500
+            let ackGroupTime = TimeSpan.FromSeconds(5.0)
+            let totalMessages = 2500
+            let warmupMessageCount = 120
+            let seekCycles = 25
+            let messagesToVerifyAfterSeek = 8
+
+            let! (producer: IProducer<byte[]>) =
+                client.NewProducer()
+                    .Topic(topicName)
+                    .ProducerName("seek-stale-producer")
+                    .EnableBatching(false)
+                    .CreateAsync()
+
+            let produceTask =
+                Task.Run(fun () ->
+                    task {
+                        for sequence in 0..(totalMessages - 1) do
+                            let! _ = producer.SendAsync(encodeSequence sequence)
+                            ()
+                    }:> Task)
+
+            let! (initialConsumer: IConsumer<byte[]>) =
+                createNonDurableLatestConsumerWithAckGroup client topicName subscriptionName receiverQueueSize ackGroupTime
+            let mutable consumer = initialConsumer
+
+            let seen = ResizeArray<int * MessageId>()
+            while seen.Count < warmupMessageCount do
+                let! message = receiveWithTimeout consumer (TimeSpan.FromSeconds(20.0))
+                let sequence = decodeSequence message
+                seen.Add(sequence, message.MessageId)
+                do! consumer.AcknowledgeAsync(message.MessageId)
+
+            for cycle in 1..seekCycles do
+                let targetIndex = seen.Count - 40
+                let targetSequence, targetMessageId = seen.[targetIndex]
+
+                do! seekUsingSerializedMessageId consumer targetMessageId
+
+                for expectedSequence in [targetSequence + 1 .. targetSequence + messagesToVerifyAfterSeek] do
+                    let! message = receiveWithTimeout consumer (TimeSpan.FromSeconds(20.0))
+                    let actualSequence = decodeSequence message
+                    Expect.equal
+                        (sprintf "stale/leaked message detected after seek cycle %i" cycle)
+                        expectedSequence
+                        actualSequence
+                    seen.Add(actualSequence, message.MessageId)
+                    do! consumer.AcknowledgeAsync(message.MessageId)
+
+                if cycle % 5 = 0 then
+                    do! consumer.DisposeAsync().AsTask()
+                    let! (recreatedConsumer: IConsumer<byte[]>) =
+                        createNonDurableLatestConsumerWithAckGroup client topicName subscriptionName receiverQueueSize ackGroupTime
+                    consumer <- recreatedConsumer
+                    for _ in 1..2 do
+                        let! message = receiveWithTimeout consumer (TimeSpan.FromSeconds(20.0))
+                        seen.Add(decodeSequence message, message.MessageId)
+                        do! consumer.AcknowledgeAsync(message.MessageId)
+                    ()
+
+            do! produceTask
+            do! consumer.DisposeAsync().AsTask()
+            do! producer.DisposeAsync().AsTask()
+            Log.Debug("Finished Non-durable consumer seek does not leak stale messages across seek reconnects")
         }
         
         

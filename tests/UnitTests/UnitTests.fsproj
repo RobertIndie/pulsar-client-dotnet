@@ -27,12 +27,14 @@
     <Compile Include="Internal\CompressionCodecTests.fs" />
     <Compile Include="Internal\AcknowledgmentsGroupingTrackerTests.fs" />
     <Compile Include="Internal\ManualInvokeScheduler.fs" />
+    <Compile Include="Internal\SeekRegressionTests.fs" />
     <Compile Include="Internal\UnAckedMessageTrackerTests.fs" />
     <Compile Include="Internal\NegativeAcksTracker.fs" />
     <Compile Include="Internal\SchemaTests.fs" />
     <Compile Include="Internal\TaskSeq.fs" />
     <Compile Include="Internal\StatsTests.fs" />
     <Compile Include="Internal\ChunkedMessageTrackerTests.fs" />
+    <Compile Include="Internal\SeekRegressionTests.fs" />
     <Compile Include="Internal\Transaction.fs" />
     <Compile Include="Tests.fs" />
     <Compile Include="Main.fs" />
