@@ -19,12 +19,12 @@ let tests =
         test "Resolver throws exception for empty address list" {
             Expect.throwsWithMessage<ArgumentException>
                 "Addresses list could not be empty. (Parameter 'addresses')"
-                (fun() -> EndPointResolver([]) |> ignore )
+                (fun() -> EndPointResolver(fun () -> []).Resolve() |> ignore)
         }
 
         test "Resolver works with single address" {
             let address = Uri("pulsar://host1:6650")
-            let resolver = EndPointResolver([address])
+            let resolver = EndPointResolver(fun () -> [address])
 
             resolver.Resolve() |> checkEndPointBy address
             resolver.Resolve() |> checkEndPointBy address
@@ -34,7 +34,7 @@ let tests =
             let address1 = Uri("pulsar://host1:6650")
             let address2 = Uri("pulsar://host2:6650")
             let address3 = Uri("pulsar://host3:6650")
-            let resolver = EndPointResolver([address1; address2; address3])
+            let resolver = EndPointResolver(fun () -> [address1; address2; address3])
 
             resolver.Resolve() |> checkEndPointBy address1
             resolver.Resolve() |> checkEndPointBy address2
@@ -43,9 +43,9 @@ let tests =
             resolver.Resolve() |> checkEndPointBy address2
         }
 
-        test "Dynamic resolver reads updated addresses" {
+        test "Resolver reads updated addresses" {
             let mutable addresses = [ Uri("pulsar://host1:6650") ]
-            let resolver = DynamicEndPointResolver(fun () -> addresses)
+            let resolver = EndPointResolver(fun () -> addresses)
 
             resolver.Resolve() |> checkEndPointBy addresses[0]
 

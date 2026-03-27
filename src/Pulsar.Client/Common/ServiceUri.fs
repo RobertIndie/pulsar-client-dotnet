@@ -81,3 +81,30 @@ module internal ServiceUri =
                 let addresses = hosts |> Seq.map (createBuilder >> rewritePort >> dropUserInfo >> getUri) |> List.ofSeq
 
                 Ok { OriginalString = str; Addresses = addresses; UseTls = useTls; Scheme = scheme }
+
+    let build (scheme: string) (useTls: bool) (addresses: Uri list) =
+        if List.isEmpty addresses then
+            invalidArg "addresses" "Addresses list could not be empty."
+
+        let fullScheme =
+            match scheme, useTls with
+            | value, true when value = BINARY_SERVICE -> "pulsar+ssl"
+            | value, true when value = HTTP_SERVICE -> "http+ssl"
+            | value, false when value = BINARY_SERVICE -> BINARY_SERVICE
+            | value, false when value = HTTP_SERVICE -> HTTP_SERVICE
+            | _ -> invalidArg "scheme" (sprintf "Unsupported scheme '%s'." scheme)
+
+        let authorities =
+            addresses
+            |> Seq.map (fun uri ->
+                let builder = UriBuilder(uri)
+                builder.Scheme <- fullScheme
+                builder.Path <- ""
+                builder.Query <- ""
+                builder.Fragment <- ""
+                builder.UserName <- null
+                builder.Password <- null
+                builder.Uri.Authority)
+            |> String.concat ","
+
+        $"{fullScheme}://{authorities}"

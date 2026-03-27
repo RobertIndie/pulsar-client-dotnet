@@ -11,7 +11,6 @@ module ProducerBuilderTests =
 
     let private builder() =
         PulsarClient({ PulsarClientConfiguration.Default with
-                            ServiceUrl = "pulsar://localhost:6650"
                             ServiceAddresses = [ Uri("pulsar://localhost:6650") ] }).NewProducer()
 
     let configure builderF builder =

@@ -28,16 +28,32 @@ module DefaultServiceInfoProviderTests =
             test "Default provider maps config to ServiceInfo" {
                 let config =
                     { PulsarClientConfiguration.Default with
-                        ServiceUrl = "pulsar://localhost:6650"
+                        ServiceAddresses = [ Uri("pulsar://localhost:6650") ]
                         UseTls = true
                         Authentication = AuthenticationFactory.Token("token") }
 
                 let provider = DefaultServiceInfoProvider(config)
                 let serviceInfo = provider.InitialServiceInfo()
 
-                serviceInfo.ServiceUrl |> Expect.equal "" "pulsar://localhost:6650"
+                serviceInfo.ServiceUrl |> Expect.equal "" "pulsar+ssl://localhost:6650"
                 serviceInfo.UseTls |> Expect.equal "" true
                 serviceInfo.Authentication.GetAuthMethodName() |> Expect.equal "" "token"
+            }
+
+            test "Default provider builds canonical http service url from config" {
+                let config =
+                    { PulsarClientConfiguration.Default with
+                        ServiceAddresses =
+                            [ Uri("http://localhost:8080")
+                              Uri("http://localhost:8081") ]
+                        Scheme = "http" }
+
+                let provider = DefaultServiceInfoProvider(config)
+                let serviceInfo = provider.InitialServiceInfo()
+
+                serviceInfo.ServiceUrl |> Expect.equal "" "http://localhost:8080,localhost:8081"
+                serviceInfo.Scheme |> Expect.equal "" "http"
+                serviceInfo.UseTls |> Expect.equal "" false
             }
 
             testTask "PulsarClient exposes updated service info from provider" {

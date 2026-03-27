@@ -9,7 +9,6 @@ open System.Security.Cryptography.X509Certificates
 
 type PulsarClientConfiguration =
     {
-        ServiceUrl: string
         ServiceAddresses: Uri list
         OperationTimeout: TimeSpan
         StatsInterval: TimeSpan
@@ -32,7 +31,6 @@ type PulsarClientConfiguration =
     }
     static member Default =
         {
-            ServiceUrl = ""
             ServiceAddresses = List.empty<Uri>
             OperationTimeout = TimeSpan.FromMilliseconds(30000.0)
             StatsInterval = TimeSpan.Zero

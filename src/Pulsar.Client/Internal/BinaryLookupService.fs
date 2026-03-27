@@ -11,7 +11,7 @@ type internal BinaryLookupService (config: PulsarClientConfiguration,
                                    connectionPool: ConnectionPool,
                                    serviceInfoManager: ServiceInfoManager) =
 
-    let endPointResolver = DynamicEndPointResolver(fun () -> serviceInfoManager.GetCurrent().ServiceAddresses)
+    let endPointResolver = EndPointResolver(fun () -> serviceInfoManager.GetCurrent().ServiceAddresses)
 
     let resolveEndPoint() = endPointResolver.Resolve()
 
