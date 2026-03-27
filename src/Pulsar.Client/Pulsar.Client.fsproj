@@ -85,6 +85,8 @@
     <Compile Include="Common\ConsumerBase.fs" />
     <Compile Include="Api\AuthenticationDataProvider.fs" />
     <Compile Include="Api\Authentication.fs" />
+    <Compile Include="Api\ServiceInfo.fs" />
+    <Compile Include="Api\ServiceInfoProvider.fs" />
     <Compile Include="Api\IMessageRouter.fs" />
     <Compile Include="Api\IConsumer.fs" />
     <Compile Include="Api\IReader.fs" />
@@ -135,12 +137,15 @@
     <Compile Include="Internal\UnAckedMessageTracker.fs" />
     <Compile Include="Internal\NegativeAcksTracker.fs" />
     <Compile Include="Internal\ClientCnx.fs" />
+    <Compile Include="Internal\ServiceInfoManager.fs" />
+    <Compile Include="Internal\DefaultServiceInfoProvider.fs" />
     <Compile Include="Internal\ConnectionPool.fs" />
     <Compile Include="Internal\EndPointResolver.fs" />
     <Compile Include="Internal\ILookupService.fs" />
     <Compile Include="Internal\BinaryLookupService.fs" />
     <Compile Include="Internal\PulsarHttpClient.fs" />
     <Compile Include="Internal\HttpLookupService.fs" />
+    <Compile Include="Internal\DynamicLookupService.fs" />
     <Compile Include="Internal\ConnectionHandler.fs" />
     <Compile Include="Internal\AcknowledgmentsGroupingTracker.fs" />
     <Compile Include="Internal\ProducerImpl.fs" />

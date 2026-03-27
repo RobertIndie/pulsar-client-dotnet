@@ -14,7 +14,7 @@ open System.Net.Sockets
 open System.Net.Security
 open System.Security.Cryptography.X509Certificates
 
-type internal ConnectionPool (config: PulsarClientConfiguration) =
+type internal ConnectionPool (config: PulsarClientConfiguration, serviceInfoManager: ServiceInfoManager) =
 
 
     let connections = ConcurrentDictionary<LogicalAddress, Lazy<Task<ClientCnx>>>()
@@ -57,9 +57,9 @@ type internal ConnectionPool (config: PulsarClientConfiguration) =
         |> Seq.map (fun cs -> string cs.Status)
         |> String.concat "|"
 
-    let remoteCertificateValidationCallback (_: obj) (cert: X509Certificate) (_: X509Chain) (errors: SslPolicyErrors) =
+    let remoteCertificateValidationCallback (serviceInfo: ServiceInfo) (_: obj) (cert: X509Certificate) (_: X509Chain) (errors: SslPolicyErrors) =
         let CheckRemoteCertWithTrustCertificate() =
-            if isNull config.TlsTrustCertificate then
+            if isNull serviceInfo.TlsTrustCertificate then
                 false
             else
                 let chain = new X509Chain()
@@ -69,7 +69,7 @@ type internal ConnectionPool (config: PulsarClientConfiguration) =
                     X509VerificationFlags.IgnoreCertificateAuthorityRevocationUnknown +
                     X509VerificationFlags.IgnoreRootRevocationUnknown
                 chain.ChainPolicy.RevocationMode <- X509RevocationMode.NoCheck
-                let ca = config.TlsTrustCertificate
+                let ca = serviceInfo.TlsTrustCertificate
                 chain.ChainPolicy.ExtraStore.Add ca |> ignore
                 use cert2 = new X509Certificate2(cert)
                 if chain.Build(cert2) then
@@ -134,6 +134,7 @@ type internal ConnectionPool (config: PulsarClientConfiguration) =
                                   broker, maxMessageSize)
         backgroundTask {
             let (PhysicalAddress physicalAddress) = broker.PhysicalAddress
+            let serviceInfo = serviceInfoManager.GetCurrent()
             // We should use PipeOptions.Default.PauseWriterThreshold as the minimum value for pauseWriterThreshold. A value that's too small isn't practical and will affect performance.
             let pauseWriterThreshold = max (int64 maxMessageSize) PipeOptions.Default.PauseWriterThreshold
             // Make sure the resumeWriterThreshold is half of the pauseWriterThreshold for better performance: https://github.com/dotnet/runtime/blob/970070e3b78b8cf604dabfe114e1f609c38c555d/src/libraries/System.IO.Pipelines/src/System/IO/Pipelines/PipeOptions.cs#L50-L51
@@ -144,15 +145,15 @@ type internal ConnectionPool (config: PulsarClientConfiguration) =
             try
                 let! connection =
                     backgroundTask {
-                        if config.UseTls then
+                        if serviceInfo.UseTls then
                             Log.Logger.LogDebug("Configuring ssl for {0}", physicalAddress)
-                            let sslStream = new SslStream(new NetworkStream(socket), false, RemoteCertificateValidationCallback(remoteCertificateValidationCallback))
-                            let authData = config.Authentication.GetAuthData(physicalAddress.Host)
+                            let sslStream = new SslStream(new NetworkStream(socket), false, RemoteCertificateValidationCallback(remoteCertificateValidationCallback serviceInfo))
+                            let authData = serviceInfo.Authentication.GetAuthData(physicalAddress.Host)
                             let clientCertificates =
                                 if authData.HasDataForTls() then
-                                    config.Authentication.GetAuthData(physicalAddress.Host).GetTlsCertificates()
+                                    serviceInfo.Authentication.GetAuthData(physicalAddress.Host).GetTlsCertificates()
                                 else
-                                    let clientCert = config.TlsCertificate
+                                    let clientCert = serviceInfo.TlsCertificate
                                     if clientCert = null then
                                         X509Certificate2Collection()
                                     elif not clientCert.HasPrivateKey then
@@ -180,7 +181,7 @@ type internal ConnectionPool (config: PulsarClientConfiguration) =
                 Log.Logger.LogDebug("Connection established for {0}", physicalAddress)
                 let initialConnectionTsc = TaskCompletionSource<ClientCnx>(TaskCreationOptions.RunContinuationsAsynchronously)
 
-                let clientCnx = ClientCnx(config, broker, connection, maxMessageSize, initialConnectionTsc,
+                let clientCnx = ClientCnx(config, serviceInfo, broker, connection, maxMessageSize, initialConnectionTsc,
                                           unregisterClientCnx)
                 let connectPayload = clientCnx.NewConnectCommand()
                 let! success = clientCnx.Send connectPayload
@@ -215,6 +216,21 @@ type internal ConnectionPool (config: PulsarClientConfiguration) =
     member this.GetBasicConnection (address: DnsEndPoint) =
         this.GetConnection({ LogicalAddress = LogicalAddress address; PhysicalAddress = PhysicalAddress address },
                            Commands.DEFAULT_MAX_MESSAGE_SIZE)
+
+    member this.CloseAllConnectionsForServiceChange() =
+        backgroundTask {
+            for KeyValue(key, connectionTask) in connections.ToArray() do
+                match connections.TryRemove(key) with
+                | true, _ ->
+                    try
+                        let! cnx = connectionTask.Value
+                        cnx.Dispose()
+                    with ex ->
+                        Log.Logger.LogDebug(ex, "Couldn't get connection on service change for {0}", key)
+                | false, _ ->
+                    ()
+        }
+        |> ignore
 
     member this.CloseAsync() =
         backgroundTask {

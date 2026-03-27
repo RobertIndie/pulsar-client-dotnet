@@ -17,16 +17,23 @@ type PulsarClientBuilder private (config: PulsarClientConfiguration) =
         config
         |> checkValue
             (fun c ->
-                c.ServiceAddresses
-                |> invalidArgIf (fun addresses -> addresses |> List.isEmpty) "Service Url needs to be specified on the PulsarClientBuilder object.")
+                match c.ServiceInfoProvider, String.IsNullOrWhiteSpace c.ServiceUrl with
+                | Some _, false -> invalidArg "config" "ServiceUrl and ServiceInfoProvider cannot be configured together."
+                | None, true -> invalidArg "config" "ServiceUrl or ServiceInfoProvider needs to be specified on the PulsarClientBuilder object."
+                | _ -> ())
 
     new() = PulsarClientBuilder(PulsarClientConfiguration.Default)
 
     member this.ServiceUrl (url: string) =
         match url |> ServiceUri.parse with
         | (Result.Ok serviceUri) ->
-            PulsarClientBuilder { config with ServiceAddresses = serviceUri.Addresses; UseTls = serviceUri.UseTls ; Scheme = serviceUri.Scheme }
+            PulsarClientBuilder { config with ServiceUrl = url; ServiceAddresses = serviceUri.Addresses; UseTls = serviceUri.UseTls ; Scheme = serviceUri.Scheme }
         | (Result.Error message) -> invalidArg null message
+
+    member this.ServiceInfoProvider (serviceInfoProvider: ServiceInfoProvider) =
+        PulsarClientBuilder
+            { config with
+                ServiceInfoProvider = Some (serviceInfoProvider |> invalidArgIfDefault "ServiceInfoProvider can't be null") }
 
     member this.OperationTimeout operationTimeout =
         PulsarClientBuilder

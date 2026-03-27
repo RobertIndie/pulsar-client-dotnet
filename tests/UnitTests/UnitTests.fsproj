@@ -19,11 +19,13 @@
     <Compile Include="Common\ToolsTests.fs" />
     <Compile Include="Common\MessageTests.fs" />
     <Compile Include="Api\ServiceUriTests.fs" />
+    <Compile Include="Api\ServiceInfoTests.fs" />
     <Compile Include="Api\ConfigurationTests.fs" />
     <Compile Include="Api\ConsumerBuilderTests.fs" />
     <Compile Include="Api\ProducerBuilderTests.fs" />
     <Compile Include="Api\PulsarClientBuilderTests.fs" />
     <Compile Include="Internal\EndPointResolverTests.fs" />
+    <Compile Include="Internal\DefaultServiceInfoProviderTests.fs" />
     <Compile Include="Internal\CompressionCodecTests.fs" />
     <Compile Include="Internal\AcknowledgmentsGroupingTrackerTests.fs" />
     <Compile Include="Internal\ManualInvokeScheduler.fs" />

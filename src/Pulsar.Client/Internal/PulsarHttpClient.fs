@@ -4,14 +4,11 @@ open System.Net.Http
 open System.Net.Http.Json
 open System.Text.Json
 open System.Text.Json.Serialization
-open Pulsar.Client.Api
 open System
 
 //  This class is mainly used for http lookup service
 //  We name this class `PulsarHttpClient` to avoid naming clash with native HttpClient, and in Java pulsar client it's just `HttpClient`
-type internal PulsarHttpClient (config: PulsarClientConfiguration) =
-
-    let authenticationDataProvider = config.Authentication.GetAuthData()
+type internal PulsarHttpClient (serviceInfoManager: ServiceInfoManager) =
 
     let jsonOptions = JsonSerializerOptions(
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -25,6 +22,7 @@ type internal PulsarHttpClient (config: PulsarClientConfiguration) =
 
     member this.Get<'T> (requestUri: string) =
         backgroundTask {
+            let authenticationDataProvider = serviceInfoManager.GetCurrent().Authentication.GetAuthData()
             if authenticationDataProvider.HasDataForHttp() then
                 let request = new HttpRequestMessage(HttpMethod.Get, requestUri)
                 for headerPropertyEntry in authenticationDataProvider.GetHttpHeaders() do

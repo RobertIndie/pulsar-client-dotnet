@@ -8,6 +8,19 @@ open Pulsar.Client.UnitTests
 
 module PulsarClientBuilderTests =
 
+    type private ManualServiceInfoProvider(initial: ServiceInfo) =
+        inherit ServiceInfoProvider()
+
+        let mutable onUpdate = ignore
+
+        member _.Update(serviceInfo: ServiceInfo) =
+            onUpdate serviceInfo
+
+        override _.InitialServiceInfo() = initial
+
+        override _.Initialize(callback) =
+            onUpdate <- callback
+
     let private builder() =
         PulsarClientBuilder()
 
@@ -36,7 +49,21 @@ module PulsarClientBuilderTests =
             test "Build throws an exception if ServiceUrl is empty" {
                 fun() -> builder().BuildAsync() |> ignore
                 |> Expect.throwsWithMessage<ArgumentException>
-                    "Service Url needs to be specified on the PulsarClientBuilder object."
+                    "ServiceUrl or ServiceInfoProvider needs to be specified on the PulsarClientBuilder object. (Parameter 'config')"
+            }
+
+            testTask "Build works with ServiceInfoProvider only" {
+                let provider = ManualServiceInfoProvider(ServiceInfo("pulsar://localhost:6650"))
+                let! (client: PulsarClient) = builder().ServiceInfoProvider(provider).BuildAsync()
+                client.ServiceInfo.ServiceUrl |> Expect.equal "" "pulsar://localhost:6650"
+                do! client.CloseAsync()
+            }
+
+            test "Build throws when ServiceUrl and ServiceInfoProvider are configured together" {
+                let provider = ManualServiceInfoProvider(ServiceInfo("pulsar://localhost:6650"))
+                fun() -> builder().ServiceUrl("pulsar://localhost:6650").ServiceInfoProvider(provider).BuildAsync() |> ignore
+                |> Expect.throwsWithMessage<ArgumentException>
+                    "ServiceUrl and ServiceInfoProvider cannot be configured together. (Parameter 'config')"
             }
 
             test "Http lookup authentication authDataProvider" {

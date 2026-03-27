@@ -30,18 +30,20 @@ type internal PulsarClientMessage =
 
 type PulsarClient internal (config: PulsarClientConfiguration) as this =
 
-    let connectionPool = ConnectionPool(config)
+    let serviceInfoProvider =
+        match config.ServiceInfoProvider with
+        | Some provider -> provider
+        | None -> DefaultServiceInfoProvider(config) :> ServiceInfoProvider
+
+    let serviceInfoManager = ServiceInfoManager(serviceInfoProvider.InitialServiceInfo())
+    let connectionPool = ConnectionPool(config, serviceInfoManager)
     let producers = HashSet<IAsyncDisposable>()
     let consumers = HashSet<IAsyncDisposable>()
     let schemaProviders = Dictionary<CompleteTopicName, MultiVersionSchemaInfoProvider>()
     let mutable clientState = Active
     let autoProduceStubType =  typeof<AutoProduceBytesSchemaStub>
     let autoConsumeStubType =  typeof<AutoConsumeSchemaStub>
-    let lookupService =
-        if config.Scheme = ServiceUri.HTTP_SERVICE then
-            HttpLookupService(config,connectionPool) :> ILookupService
-        else
-            BinaryLookupService(config,connectionPool) :> ILookupService
+    let lookupService = DynamicLookupService(config, connectionPool, serviceInfoManager) :> ILookupService
 
     let transactionClient =
         if config.EnableTransaction then
@@ -102,7 +104,7 @@ type PulsarClient internal (config: PulsarClientConfiguration) as this =
             | Close channel ->
                 match this.ClientState with
                 | Active ->
-                    Log.Logger.LogInformation("Client closing. URL: {0}", config.ServiceAddresses)
+                    Log.Logger.LogInformation("Client closing. URL: {0}", serviceInfoManager.GetCurrent().ServiceUrl)
                     this.ClientState <- Closing
                     let producersTasks = producers |> Seq.map (fun producer -> backgroundTask { return! producer.DisposeAsync() } )
                     let consumerTasks = consumers |> Seq.map (fun consumer -> backgroundTask { return! consumer.DisposeAsync() })
@@ -110,7 +112,6 @@ type PulsarClient internal (config: PulsarClientConfiguration) as this =
                         try
                             let! _ = Task.WhenAll (seq { yield! producersTasks; yield! consumerTasks })
                             schemaProviders |> Seq.iter (fun (KeyValue (_, provider)) -> provider.Close())
-                            config.Authentication.Dispose()
                             tryStopMailbox()
                             channel.SetResult()
                         with ex ->
@@ -123,6 +124,8 @@ type PulsarClient internal (config: PulsarClientConfiguration) as this =
             | Stop ->
                 this.ClientState <- Closed
                 do! connectionPool.CloseAsync()
+                serviceInfoProvider.Dispose()
+                serviceInfoManager.DisposeTrackedResources()
                 transactionClient |> Option.iter _.Close()
                 Log.Logger.LogInformation("Pulsar client stopped")
                 continueLoop <- false
@@ -133,6 +136,15 @@ type PulsarClient internal (config: PulsarClientConfiguration) as this =
             else
                 Log.Logger.LogInformation("PulsarClient mailbox has stopped normally"))
         |> ignore
+
+    do
+        serviceInfoProvider.Initialize(fun serviceInfo ->
+            match this.ClientState with
+            | Active ->
+                serviceInfoManager.Update(serviceInfo)
+                connectionPool.CloseAllConnectionsForServiceChange()
+            | _ ->
+                ())
 
     let removeConsumer = fun consumer -> post mb (RemoveConsumer consumer)
     let addConsumer = fun consumer -> post mb (AddConsumer consumer)
@@ -364,6 +376,8 @@ type PulsarClient internal (config: PulsarClientConfiguration) as this =
         match this.ClientState with
         | PulsarClientState.Closed | PulsarClientState.Closing -> true
         | _ -> false
+
+    member this.ServiceInfo = serviceInfoManager.GetCurrent()
 
     member this.NewProducer() =
         ProducerBuilder(this.CreateProducerAsync, Schema.BYTES())

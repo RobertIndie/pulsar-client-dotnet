@@ -42,4 +42,16 @@ let tests =
             resolver.Resolve() |> checkEndPointBy address1
             resolver.Resolve() |> checkEndPointBy address2
         }
+
+        test "Dynamic resolver reads updated addresses" {
+            let mutable addresses = [ Uri("pulsar://host1:6650") ]
+            let resolver = DynamicEndPointResolver(fun () -> addresses)
+
+            resolver.Resolve() |> checkEndPointBy addresses[0]
+
+            addresses <- [ Uri("pulsar://host2:6650"); Uri("pulsar://host3:6650") ]
+
+            resolver.Resolve() |> checkEndPointBy addresses[1]
+            resolver.Resolve() |> checkEndPointBy addresses[0]
+        }
     ]

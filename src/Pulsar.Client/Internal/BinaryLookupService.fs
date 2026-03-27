@@ -7,9 +7,11 @@ open System
 open System.Net
 open Microsoft.Extensions.Logging
 
-type internal BinaryLookupService (config: PulsarClientConfiguration, connectionPool: ConnectionPool) =
+type internal BinaryLookupService (config: PulsarClientConfiguration,
+                                   connectionPool: ConnectionPool,
+                                   serviceInfoManager: ServiceInfoManager) =
 
-    let endPointResolver = EndPointResolver(config.ServiceAddresses)
+    let endPointResolver = DynamicEndPointResolver(fun () -> serviceInfoManager.GetCurrent().ServiceAddresses)
 
     let resolveEndPoint() = endPointResolver.Resolve()
 
@@ -107,9 +109,10 @@ type internal BinaryLookupService (config: PulsarClientConfiguration, connection
             let payload = Commands.newLookup topicName requestId authoritative config.ListenerName
             let! response = clientCnx.SendAndWaitForReply requestId payload
             let lookupTopicResult = PulsarResponseType.GetLookupTopicResult response
+            let serviceInfo = serviceInfoManager.GetCurrent()
             // (1) build response broker-address
             let uri =
-                if config.UseTls then
+                if serviceInfo.UseTls then
                     Uri(lookupTopicResult.BrokerServiceUrlTls)
                 else
                     Uri(lookupTopicResult.BrokerServiceUrl)

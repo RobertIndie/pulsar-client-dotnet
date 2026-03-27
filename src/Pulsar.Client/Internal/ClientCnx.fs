@@ -112,6 +112,7 @@ and internal SocketMessage =
     | Stop
 
 and internal ClientCnx (config: PulsarClientConfiguration,
+                serviceInfo: ServiceInfo,
                 broker: Broker,
                 connection: Connection,
                 maxMessageSize: int,
@@ -128,7 +129,7 @@ and internal ClientCnx (config: PulsarClientConfiguration,
     let (PhysicalAddress physicalAddress) = broker.PhysicalAddress
     let (LogicalAddress logicalAddress) = broker.LogicalAddress
     let proxyToBroker = if physicalAddress = logicalAddress then None else Some logicalAddress
-    let mutable authenticationDataProvider = config.Authentication.GetAuthData(physicalAddress.Host);
+    let mutable authenticationDataProvider = serviceInfo.Authentication.GetAuthData(physicalAddress.Host);
 
     let consumers = Dictionary<ConsumerId, ConsumerOperations>()
     let producers = Dictionary<ProducerId, ProducerOperations>()
@@ -783,8 +784,8 @@ and internal ClientCnx (config: PulsarClientConfiguration,
             if cmd.Challenge |> isNull |> not then
                 if (cmd.Challenge.auth_data |> Array.compareWith Operators.compare AuthData.REFRESH_AUTH_DATA_BYTES) = 0 then
                     Log.Logger.LogDebug("{0} Refreshed authentication provider", prefix)
-                    authenticationDataProvider <- config.Authentication.GetAuthData(physicalAddress.Host)
-                let methodName = config.Authentication.GetAuthMethodName()
+                    authenticationDataProvider <- serviceInfo.Authentication.GetAuthData(physicalAddress.Host)
+                let methodName = serviceInfo.Authentication.GetAuthMethodName()
                 let authData = authenticationDataProvider.Authenticate({ Bytes = cmd.Challenge.auth_data })
                 let request = Commands.newAuthResponse methodName authData (int protocolVersion) clientVersion
                 Log.Logger.LogInformation("{0} Mutual auth {1}, requested {2}", prefix, methodName, cmd.Challenge.AuthMethodName)
@@ -876,7 +877,7 @@ and internal ClientCnx (config: PulsarClientConfiguration,
 
     member internal this.NewConnectCommand() =
         let authData = authenticationDataProvider.Authenticate(AuthData.INIT_AUTH_DATA)
-        let authMethodName = config.Authentication.GetAuthMethodName()
+        let authMethodName = serviceInfo.Authentication.GetAuthMethodName()
         Commands.newConnect authMethodName authData clientVersion protocolVersion proxyToBroker
 
     member this.Send payload =
