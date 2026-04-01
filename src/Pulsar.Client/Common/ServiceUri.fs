@@ -39,7 +39,7 @@ module internal ServiceUri =
         m.Groups[name].Value
 
     let private getGroupCaptureValues (name : string) (m : Match) =
-        m.Groups[name].Captures |> Seq.cast<Capture> |> Seq.map _.Value
+        m.Groups[name].Captures |> Seq.cast<Capture> |> Seq.map (fun capture -> capture.Value)
 
     let parse str =
 
