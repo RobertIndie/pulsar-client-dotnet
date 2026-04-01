@@ -303,10 +303,15 @@ let tests =
                     .BlockIfQueueFull(true)
                     .CreateAsync()
 
-            for i in 0 .. messagesNumber-1 do
-                let buffer = Array.zeroCreate<byte> 50
-                Random.Shared.NextBytes(buffer)
-                producer.SendAsync(buffer) |> ignore
+            let sendTasks =
+                [|
+                    for _ in 0 .. messagesNumber - 1 do
+                        let buffer = Array.zeroCreate<byte> 50
+                        Random.Shared.NextBytes(buffer)
+                        producer.SendAsync(buffer)
+                |]
+
+            let! _ = Task.WhenAll sendTasks
 
             for i in 0 .. messagesNumber-1 do
                 let! (message: Message<byte[]>) = consumer.ReceiveAsync()
