@@ -297,7 +297,8 @@ let tests =
                     .ProducerName("batch producer")
                     .EnableBatching(true)
                     .BatchingMaxMessages(messagesNumber / 2)
-                    .BatchingMaxBytes(100)
+                    // Keep the split driven by max-messages instead of payload metadata size.
+                    .BatchingMaxBytes(1024)
                     .MaxPendingMessages(1)
                     .BlockIfQueueFull(true)
                     .CreateAsync()

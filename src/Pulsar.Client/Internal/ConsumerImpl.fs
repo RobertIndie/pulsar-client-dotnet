@@ -200,6 +200,27 @@ type internal ConsumerImpl<'T> (consumerConfig: ConsumerConfiguration<'T>, clien
 
         let rec internalGetLastMessageIdAsync(backoff: Backoff, remainingTimeMs: int) =
             async {
+                let retryWithBackoff (logMessage: string) (ex: exn option) =
+                    async {
+                        let nextDelay = Math.Min(backoff.Next(), remainingTimeMs)
+                        if nextDelay <= 0 then
+                            match ex with
+                            | Some error -> return reraize error
+                            | None ->
+                                return
+                                    "Couldn't get the last message id withing configured timeout"
+                                    |> TimeoutException
+                                    |> raise
+                        else
+                            match ex with
+                            | Some error ->
+                                Log.Logger.LogWarning(error, "{0} {1} -- Will try again in {2} ms", prefix, logMessage, nextDelay)
+                            | None ->
+                                Log.Logger.LogWarning("{0} {1} -- Will try again in {2} ms", prefix, logMessage, nextDelay)
+                            do! Async.Sleep nextDelay
+                            return! internalGetLastMessageIdAsync(backoff, remainingTimeMs - nextDelay)
+                    }
+
                 match connectionHandler.ConnectionState with
                 | Ready clientCnx ->
                     let requestId = Generators.getNextRequestId()
@@ -208,21 +229,16 @@ type internal ConsumerImpl<'T> (consumerConfig: ConsumerConfiguration<'T>, clien
                         let! response = clientCnx.SendAndWaitForReply requestId payload |> Async.AwaitTask
                         return response |> PulsarResponseType.GetLastMessageId
                     with
+                    | Flatten (:? BrokerMetadataException as ex) when ex.Message = "Consumer not found" ->
+                        return!
+                            retryWithBackoff
+                                "Broker did not recognize the consumer while GetLastMessageId"
+                                (Some ex)
                     | Flatten ex ->
                         Log.Logger.LogError(ex, "{0} failed getLastMessageId", prefix)
                         return reraize ex
                 | _ ->
-                    let nextDelay = Math.Min(backoff.Next(), remainingTimeMs)
-                    if nextDelay <= 0 then
-                        return
-                            "Couldn't get the last message id withing configured timeout"
-                            |> TimeoutException
-                            |> raise
-                    else
-                        Log.Logger.LogWarning("{0} Could not get connection while GetLastMessageId -- Will try again in {1} ms",
-                                              prefix, nextDelay)
-                        do! Async.Sleep nextDelay
-                        return! internalGetLastMessageIdAsync(backoff, remainingTimeMs - nextDelay)
+                    return! retryWithBackoff "Could not get connection while GetLastMessageId" None
             }
 
         match connectionHandler.ConnectionState with
