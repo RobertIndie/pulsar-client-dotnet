@@ -3,21 +3,23 @@
 open System.Text.RegularExpressions
 open System
 
-type internal ServiceUri = {
+type ServiceUri = {
     OriginalString : string
-    Addresses : Uri list
+    Addresses : Uri array
     UseTls : bool
+    Scheme : string
 }
 
 [<RequireQualifiedAccess>]
 module internal ServiceUri =
 
-    let private BINARY_SERVICE = "pulsar"
+    let BINARY_SERVICE = "pulsar"
+    let HTTP_SERVICE = "http"
     let private SSL_SERVICE = "ssl"
 
     let private BINARY_PORT = 6650
     let private BINARY_TLS_PORT = 6651
-
+    
     let private schemeGroup = "scheme"
     let private servicesGroup = "services"
     let private hostsGroup = "hosts"
@@ -25,7 +27,7 @@ module internal ServiceUri =
 
     let private pattern =
         sprintf
-            "^(?<%s>pulsar)(?:\+(?<%s>ssl))*://(?:(?<%s>[^\s/;,]+)[;,]?)+(?<%s>/.+)?$"
+            "^(?<%s>pulsar|http)(?:\+(?<%s>ssl))*://(?:(?<%s>[^\s/;,]+)[;,]?)+(?<%s>/.+)?$"
             schemeGroup
             servicesGroup
             hostsGroup
@@ -34,10 +36,10 @@ module internal ServiceUri =
     let private regex = Regex(pattern, RegexOptions.Compiled)
 
     let private getGroupValue (name : string) (m : Match) =
-        m.Groups.[name].Value
+        m.Groups[name].Value
 
     let private getGroupCaptureValues (name : string) (m : Match) =
-        m.Groups.[name].Captures |> Seq.cast<Capture> |> Seq.map (fun c -> c.Value)
+        m.Groups[name].Captures |> Seq.cast<Capture> |> Seq.map _.Value
 
     let parse str =
 
@@ -53,12 +55,12 @@ module internal ServiceUri =
                 let services = m |> getGroupCaptureValues servicesGroup
                 let hosts = m |> getGroupCaptureValues hostsGroup
                 let path = m |> getGroupValue pathGroup
-                let useTls = services |> Seq.contains SSL_SERVICE && scheme = BINARY_SERVICE
+                let useTls = services |> Seq.contains SSL_SERVICE
 
                 let createBuilder host = UriBuilder(sprintf "%s://%s%s" scheme host path)
 
                 let rewritePort (builder : UriBuilder) =
-                    if builder.Port = -1 then
+                    if scheme = BINARY_SERVICE && builder.Port = -1 then
                         if services |> Seq.contains SSL_SERVICE then
                             builder.Port <- BINARY_TLS_PORT
                         else
@@ -72,6 +74,6 @@ module internal ServiceUri =
 
                 let getUri (builder : UriBuilder) = builder.Uri
 
-                let addresses = hosts |> Seq.map (createBuilder >> rewritePort >> dropUserInfo >> getUri) |> List.ofSeq
+                let addresses = hosts |> Seq.map (createBuilder >> rewritePort >> dropUserInfo >> getUri) |> Array.ofSeq
 
-                Ok { OriginalString = str; Addresses = addresses; UseTls = useTls }
+                Ok { OriginalString = str; Addresses = addresses; UseTls = useTls; Scheme = scheme }
