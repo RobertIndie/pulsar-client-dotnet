@@ -29,10 +29,10 @@ let pulsarHttpAddress = "http://127.0.0.1:8080"
 // ssl folder copied by from https://github.com/apache/pulsar/tree/master/tests/docker-images/latest-version-image/ssl
 // generate pfx file from pem, leave the password blank
 // openssl pkcs12 -in admin.cert.pem -inkey admin.key-pk8.pem -export -out admin.pfx
-let ca = X509CertificateLoader.LoadCertificateFromFile(@"../ssl/ca.cert.pem")
+let ca = new X509Certificate2(@"../ssl/ca.cert.pem")
 // Load the client certificate for the mtls encryption
 // The admin.pfx contains both client certificate and private key, which can be used for both mtls encryption and authentication.
-let clientCert = X509CertificateLoader.LoadPkcs12FromFile(@"../ssl/admin.pfx", "", X509KeyStorageFlags.DefaultKeySet, Pkcs12LoaderLimits.Defaults)
+let clientCert = new X509Certificate2(@"../ssl/admin.pfx", "", X509KeyStorageFlags.DefaultKeySet)
 // Use client certificate for tls authentication
 let sslAdmin = AuthenticationFactory.Tls(@"../ssl/admin.pfx")
 let sslUser1 = AuthenticationFactory.Tls(@"../ssl/user1.pfx")
