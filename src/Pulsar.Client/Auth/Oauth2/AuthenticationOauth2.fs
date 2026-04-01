@@ -53,12 +53,11 @@ type internal AuthenticationOauth2(issuerUrl: Uri, audience: string, credentials
     inherit Authentication()
 
     let mutable token : Option<TokenResult * DateTime> = None
-    let serviceProvider =
+    let httpClientFactory =
         ServiceCollection()
             .AddHttpClient()
             .BuildServiceProvider()
-
-    let httpClientFactory = serviceProvider.GetService<IHttpClientFactory>()
+            .GetService<IHttpClientFactory>()
 
     //Gets a well-known metadata URL for the given OAuth issuer URL.
     //https://tools.ietf.org/id/draft-ietf-oauth-discovery-08.html#ASConfig
